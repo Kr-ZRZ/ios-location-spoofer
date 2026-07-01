@@ -26,41 +26,6 @@
   var CELL_RESPONSE_FIELDS = { 22: true, 24: true };
   var LOCATION_REPLACED_FIELDS = { 1: true, 2: true, 3: true, 4: true, 5: true, 6: true, 11: true, 12: true };
 
-  // 唯一允许处理的 hostname 后缀集合。
-  // 必须与 ios-location-spoofer.snippet 里 [mitm] hostname 字段完全对齐。
-  // 任何不命中的请求（脚本误执行时）→ 立即透传，绝不让 fallback 路径
-  // 错误地改写响应体。
-  //
-  // 这一层是 MITM/规则之外的第二道防线。即使 MITM 把域名漏白，
-  // 脚本也不会乱改 body——交给 \$response 原值透传给客户端。
-  var ALLOWED_HOST_SUFFIXES = [
-    "gs-loc.apple.com",
-    "gs-loc-cn.apple.com",
-    "bluedot.is.autonavi.com",
-    "alibabadns.com"  // bluedot.is.autonavi.com.gds.alibabadns.com 的父域
-  ];
-
-  function extractHost(requestObj) {
-    if (!requestObj) return "";
-    var url = requestObj.url || "";
-    var m = url.match(/^https?:\/\/([^\/\?#]+)/i);
-    if (m) return m[1];
-    // 退化：用 host 字段
-    if (requestObj.host) return String(requestObj.host);
-    if (requestObj.hostname) return String(requestObj.hostname);
-    return "";
-  }
-
-  function hostAllowed(requestObj) {
-    var host = extractHost(requestObj).toLowerCase();
-    if (!host) return null;
-    for (var i = 0; i < ALLOWED_HOST_SUFFIXES.length; i++) {
-      var suf = ALLOWED_HOST_SUFFIXES[i];
-      if (host === suf || host.endsWith("." + suf)) return suf;
-    }
-    return null;
-  }
-
   // ========== Byte Utilities ==========
 
   function concatBytes(parts) {
@@ -530,30 +495,10 @@
     var hasRequest = typeof $request !== "undefined";
     if (!hasRequest && !hasResponse) return;
 
-    // 第二道防线：检查 $request.url 的 host 是否在白名单里。
-    // QX 在 rewrite 上有 url pattern 匹配（snippet 里那段正则），
-    // 但我们脚本层加这一层兜底——即便上游规则漏了配置，
-    // 也不让脚本误改不在 4 个目标域名之内的响应体。
-    var allowedSuf = hostAllowed($request);
-    if (!allowedSuf) {
-      // debug 输出具体看到了哪个 host，方便用户定位"为什么没拦截"
-      try {
-        if ($request && typeof $request !== "undefined" && (typeof $argument !== "undefined" ? $argument : "").indexOf("debug=true") >= 0) {
-          console.log("Location spoofer QX skip non-whitelist host: " + extractHost($request));
-        }
-      } catch (e) {}
-      donePassThrough();
-      return;
-    }
-
     var config = loadConfig();
 
     try {
       if (!config.enabled) { donePassThrough(); return; }
-
-      if (config.debug) {
-        console.log("Location spoofer QX host OK: " + allowedSuf + " url=" + ($request && $request.url ? $request.url : "<none>"));
-      }
 
       // mode = inspect：只打印 payload 信息，不改 body
       if (config.mode === "inspect" && hasResponse) {
